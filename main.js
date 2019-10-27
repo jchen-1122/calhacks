@@ -1,0 +1,1 @@
+var routes = [lmao, lmao, lol];

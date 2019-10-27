@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8' />
+    <title></title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+    <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v1.4.1/mapbox-gl.js'></script>
+    <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v1.4.1/mapbox-gl.css' rel='stylesheet' />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      #map {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 100%;
+      }
+      #instructions {
+  position: absolute;
+  margin: 20px;
+  width: 25%;
+  top: 0;
+  bottom: 20%;
+  padding: 20px;
+  background-color: rgba(255, 255, 255, 0.9);
+  overflow-y: scroll;
+  font-family: sans-serif;
+  font-size: 0.8em;
+  line-height: 2em;
+}
+
+.duration {
+  font-size: 2em;
+}
+    </style>
+  </head>
+  <body>
+    <div id='map'></div>
+    <script>
+    var getJSON = function(url, callback) {
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType = 'json';
+    
+    xhr.onload = function() {
+    
+        var status = xhr.status;
+        
+        if (status == 200) {
+            callback(null, xhr.response);
+        } else {
+            callback(status);
+        }
+    };
+    
+    xhr.send();
+};
+
+var categoryOffenses = ['violence', 'theft', 'assault', 'illegal activity']
+
+var allCoors = [];
+var streets = [];
+var assault = [];
+var assaultTime = 0;
+
+getJSON('https://data.cityofberkeley.info/resource/k2nh-s5h5.json',  function(err, data) {
+    
+    if (err != null) {
+        console.error(err);
+    } else {
+        for (var i = 0; i < data.length; i++) {
+          /*
+          var longitude = data[i].block_location.longitude;
+          var latitude = data[i].block_location.latitude;
+          var currCoor = [longitude, latitude];
+          allCoors.push(currCoor);*/
+
+          var firstWord = data[i].blkaddr.split(" ")[1].toLowerCase();
+          streets.push(firstWord);
+          if (data[i].offense == 'SEXUAL ASSAULT FEL.') {
+            var longitude = data[i].block_location.longitude;
+            var latitude = data[i].block_location.latitude;
+            assault = [longitude, latitude];
+            assaultTime = data[i].eventdt.split("T")[0];
+          }
+        }
+    }
+});
+    // add the JavaScript here
+    mapboxgl.accessToken = 'pk.eyJ1IjoiamNoZW4xMTIyIiwiYSI6ImNrMjZ4dXM0cDF4cnozY21sYnBwYjdzaTAifQ.ItVivcBhnM1Lz9GP5B0PSQ';
+var map = new mapboxgl.Map({
+  container: 'map',
+  style: 'mapbox://styles/mapbox/streets-v10',
+  center: [-122.2508, 37.8707], // starting position
+  zoom: 12
+});
+// set the bounds of the map
+var bounds = [[-122.669003, 37.695273], [-122.003707, 37.952333]];
+map.setMaxBounds(bounds);
+
+// initialize the map canvas to interact with later
+var canvas = map.getCanvasContainer();
+
+// an arbitrary start will always be the same
+// only the end or destination will change
+var start = [-122.2508, 37.8707];
+function getRoute(end) {
+  // make a directions request using cycling profile
+  // an arbitrary start will always be the same
+  // only the end or destination will change
+  var start = [-122.2508, 37.8707];
+  var url = 'https://api.mapbox.com/directions/v5/mapbox/cycling/' + start[0] + ',' + start[1] + ';' + end[0] + ',' + end[1] + '?steps=true&geometries=geojson&access_token=' + mapboxgl.accessToken;
+
+  // make an XHR request https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest
+  var req = new XMLHttpRequest();
+  req.responseType = 'json';
+  req.open('GET', url, true);
+  req.onload = function() {
+    var data = req.response.routes[0];
+    var steps = data.legs[0].steps;
+    var route = data.geometry.coordinates;
+    /*
+    var allVisited = [];
+    for (var i = 0; i < route.length; i++) {
+      allVisited = route[i];
+    }*/
+    var allStreets = [];
+    for (var i = 0; i < steps.length; i++) {
+        if(steps[i].name != "") {
+          var first = steps[i].name.split(" ")[0].toLowerCase();
+          if (allStreets.includes(first)) {
+          } else {
+            allStreets.push(first);
+          }
+        }
+    }
+    var count = 0;
+    for (var i = 0; i < allStreets.length; i++) {
+      if (streets.includes(allStreets[i])) {
+        count++;
+      }
+    }
+
+    var geojson = {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: route
+      }
+    };
+    // if the route already exists on the map, reset it using setData
+    if (map.getSource('route')) {
+      map.getSource('route').setData(geojson);
+    } else { // otherwise, make a new request
+      map.addLayer({
+        id: 'route',
+        type: 'line',
+        source: {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'LineString',
+              coordinates: geojson
+            }
+          }
+        },
+        layout: {
+          'line-join': 'round',
+          'line-cap': 'round'
+        },
+        paint: {
+          'line-color': '#3887be',
+          'line-width': 5,
+          'line-opacity': 0.75
+        }
+      });
+    }
+    // add turn instructions here at the end
+    var instructions = document.getElementById('instructions');
+
+var tripInstructions = [];
+var totalCrimes = '<h4> Number of Crimes reported near this route in the last year: ' + count + '</h4>';
+var crime = '<h4> Currently viewing most recent sexual assault report, which occured on ' + assaultTime + '</h4>';
+
+for (var i = 0; i < steps.length; i++) {
+  tripInstructions.push('<br><li>' + steps[i].maneuver.instruction) + '</li>';
+  instructions.innerHTML = totalCrimes + crime + '<br><span class="duration">Trip duration: ' + Math.floor(data.duration / 60) + ' min </span>' + tripInstructions;
+}
+
+  };
+  req.send();
+}
+
+var size = 75;
+ 
+var pulsingDot = {
+width: size,
+height: size,
+data: new Uint8Array(size * size * 4),
+ 
+onAdd: function() {
+var canvas = document.createElement('canvas');
+canvas.width = this.width;
+canvas.height = this.height;
+this.context = canvas.getContext('2d');
+},
+ 
+render: function() {
+var duration = 1000;
+var t = (performance.now() % duration) / duration;
+ 
+var radius = size / 2 * 0.3;
+var outerRadius = size / 2 * 0.7 * t + radius;
+var context = this.context;
+ 
+// draw outer circle
+context.clearRect(0, 0, this.width, this.height);
+context.beginPath();
+context.arc(this.width / 2, this.height / 2, outerRadius, 0, Math.PI * 2);
+context.fillStyle = 'rgba(255, 200, 200,' + (1 - t) + ')';
+context.fill();
+ 
+// draw inner circle
+context.beginPath();
+context.arc(this.width / 2, this.height / 2, radius, 0, Math.PI * 2);
+context.fillStyle = 'rgba(255, 100, 100, 1)';
+context.strokeStyle = 'white';
+context.lineWidth = 2 + 4 * (1 - t);
+context.fill();
+context.stroke();
+ 
+// update this image's data with data from the canvas
+this.data = context.getImageData(0, 0, this.width, this.height).data;
+ 
+// keep the map repainting
+map.triggerRepaint();
+ 
+// return `true` to let the map know that the image was updated
+return true;
+}
+};
+ 
+map.on('load', function () {
+ 
+map.addImage('pulsing-dot', pulsingDot, { pixelRatio: 2 });
+ 
+map.addLayer({
+"id": "points",
+"type": "symbol",
+"source": {
+"type": "geojson",
+"data": {
+"type": "FeatureCollection",
+"features": [{
+"type": "Feature",
+"geometry": {
+"type": "Point",
+"coordinates": assault
+}
+}]
+}
+},
+"layout": {
+"icon-image": "pulsing-dot"
+}
+});
+});
+
+map.on('load', function() {
+  // make an initial directions request that
+  // starts and ends at the same location
+  getRoute(start);
+
+  // Add starting point to the map
+  map.addLayer({
+    id: 'point',
+    type: 'circle',
+    source: {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'Point',
+            coordinates: start
+          }
+        }
+        ]
+      }
+    },
+    paint: {
+      'circle-radius': 10,
+      'circle-color': '#3887be'
+    }
+  });
+  // this is where the code from the next step will go
+  map.on('click', function(e) {
+  var coordsObj = e.lngLat;
+  canvas.style.cursor = '';
+  var coords = Object.keys(coordsObj).map(function(key) {
+    return coordsObj[key];
+  });
+  var end = {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Point',
+        coordinates: coords
+      }
+    }
+    ]
+  };
+  if (map.getLayer('end')) {
+    map.getSource('end').setData(end);
+  } else {
+    map.addLayer({
+      id: 'end',
+      type: 'circle',
+      source: {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'Point',
+              coordinates: coords
+            }
+          }]
+        }
+      },
+      paint: {
+        'circle-radius': 10,
+        'circle-color': '#f30'
+      }
+    });
+  }
+  getRoute(coords);
+});
+});
+    </script>
+    <div id="instructions"></div>
+  </body>
+</html>
